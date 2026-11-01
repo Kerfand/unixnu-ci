@@ -279,6 +279,27 @@ jobs:
           print(f'{count} text logs staged')
           PY
 
+      - name: Upload the built kernel
+        if: always() && steps.kernel.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-fuxi-kernel
+          path: |
+            out/*/*/*/kernel/kernel.macho
+            out/*/*/*/kernel/kernel.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload the built payload
+        if: always() && steps.payload.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-fuxi-payload
+          path: |
+            out/*/*/*/payload/payload.img
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload the build logs
         if: always() && steps.logs.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
