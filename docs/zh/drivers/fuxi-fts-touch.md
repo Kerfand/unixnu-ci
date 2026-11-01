@@ -6,7 +6,7 @@ ST FingerTip FTM5 触控协议与触点跟踪，为小米 13（fuxi，SM8550）�
 
 [源码仓库](https://github.com/OddlyLabs/FuxiFtsTouch)。
 
-控制器��固件在芯片自带的 flash 里：主机只需要复位它、等它的就绪事件、开始扫描，然后读事件 FIFO。传输由调用方提供（`struct fts_bus`：全双工收发、延时、复位脚）。在 fuxi 上，板级探针用 [QcomGeniSpi](/zh/drivers/qcom-geni-spi) 的 GENI SPI 传输。
+控制器的固件在芯片自带的 flash 里：主机只需要复位它、等它的就绪事件、开始扫描，然后读事件 FIFO。传输由调用方提供（`struct fts_bus`：全双工收发、延时、复位脚）。在 fuxi 上，板级探针用 [QcomGeniSpi](/zh/drivers/qcom-geni-spi) 的 GENI SPI 传输。
 
 | 文件 | 作用 |
 | --- | --- |
