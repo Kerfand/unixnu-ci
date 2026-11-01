@@ -234,6 +234,15 @@ clang --target=aarch64-none-elf -c \
 
 它追加固件卷，用 gzip 压缩，追加设备树，再打包 Android 启动镜像。
 
+如果设备的 bootloader 和 sheng 的行为不同，可以用下面两项设置：
+
+| 设置 | 作用 |
+| --- | --- |
+| 设备配置 `[boot_image]` 或 `board.toml [bootimg.image]` 里的 `text_offset` | BootShim 编译时加上 `-DTEXT_OFFSET=<值>`，ARM64 头里写这个加载偏移，不再写固件基址；固件卷由 shim 自己复制到固件基址。不支持 `TEXT_OFFSET` 的 BootShim 会被拒绝。 |
+| `board.toml [bootimg] payload = "image"` | 负载卷紧跟在固件卷后面，放进内核镜像；头部偏移 `0x10` 的镜像大小也把它算进去。启动镜像的 ramdisk 改用固件仓库里的 `Resources/ramdisk` 占位文件。固件需要发布 shim 通过 `x1` 交出的负载卷。 |
+
+小米 13（fuxi）两项都要用：它的 bootloader 拒绝在镜像头里要求固件地址的镜像，而且启动镜像的 ramdisk 到不了固件。
+
 ## 验证
 
 | 检查 | 方法 |

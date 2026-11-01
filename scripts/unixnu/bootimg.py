@@ -3,6 +3,13 @@
 Inputs are a Mu-Silicium checkout (BootShim sources, Resources/Configs/<device>.toml, mkbootimg.py),
 the built firmware volume and a compiled device tree. The image is meant for "fastboot boot" only.
 The result is verified by unpacking it again; the output is deterministic.
+
+Two board needs are configurable. A device config (or board.toml [bootimg.image]) may set text_offset: the shim then
+advertises that load offset in its ARM64 header instead of the firmware base, for bootloaders that refuse the firmware
+address (the shim is position independent and copies the volume to the firmware base itself). board.toml [bootimg]
+payload = "image" appends the payload volume after the firmware volume inside the kernel image, for bootloaders whose
+ramdisk never reaches the firmware; the image size in the ARM64 header then covers it, and the firmware publishes the
+volume the shim hands over.
 """
 import gzip
 import hashlib
@@ -20,21 +27,26 @@ DEFAULTS = {'header_version': 0, 'base': 0, 'kernel_offset': 0x8000, 'tags_offse
 MKBOOTIMG_FLAGS = ('base', 'kernel_offset', 'tags_offset', 'pagesize', 'header_version', 'ramdisk_offset', 'second_offset', 'cmdline')
 
 
-def compile_shim(uefi, base, size, requires_header, scratch):
+def compile_shim(uefi, base, size, requires_header, scratch, text_offset=None):
     clang, objcopy, nm = tool('clang'), tool('llvm-objcopy', 'brew install llvm'), tool('llvm-nm', 'brew install llvm')
     source = uefi / 'BootShim/BootShim.S'
     if not source.is_file():
         raise Error(f'{source} missing: --uefi must be a Mu-Silicium checkout')
     obj = scratch / 'shim.o'
-    run([clang, '--target=aarch64-none-elf', '-c', f'-DFD_BASE={base}', f'-DFD_SIZE={size}',
-         f'-DREQUIRES_KERNEL_HEADER={int(requires_header)}', source, '-o', obj], capture=True)
+    defines = [f'-DFD_BASE={base}', f'-DFD_SIZE={size}', f'-DREQUIRES_KERNEL_HEADER={int(requires_header)}']
+    if text_offset is not None:
+        defines.append(f'-DTEXT_OFFSET={text_offset}')
+    run([clang, '--target=aarch64-none-elf', '-c', *defines, source, '-o', obj], capture=True)
     run([objcopy, '-O', 'binary', obj, scratch / 'shim.bin'], capture=True)
     shim = (scratch / 'shim.bin').read_bytes()
     symbols = run([nm, '-n', obj], capture=True)
     offset = next((int(line.split()[0], 16) for line in symbols.splitlines() if line.endswith(' _Payload')), None)
     if offset != len(shim):
         raise Error('a literal pool or padding separates the _Payload label from the appended firmware volume')
-    if requires_header and (shim[56:60] != b'ARM\x64' or struct.unpack_from('<QQ', shim, 8) != (base, len(shim) + size)):
+    expected = base if text_offset is None else text_offset
+    if requires_header and (shim[56:60] != b'ARM\x64' or struct.unpack_from('<QQ', shim, 8) != (expected, len(shim) + size)):
+        if text_offset is not None and struct.unpack_from('<Q', shim, 8)[0] == base:
+            raise Error(f'{source} ignores TEXT_OFFSET: the device config asks for text offset {text_offset:#x}')
         raise Error('the ARM64 image header does not describe the shim plus the firmware volume')
     return shim
 
@@ -71,6 +83,11 @@ def settings(ctx, uefi):
 def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
     log('bootimg')
     image, base, size, requires_header, config = settings(ctx, uefi)
+    text_offset = image.pop('text_offset', None)
+    text_offset = None if text_offset is None else int(str(text_offset), 0)
+    carrier = ctx.board.get('bootimg', {}).get('payload', 'ramdisk')
+    if carrier not in ('ramdisk', 'image'):
+        raise Error(f'board.toml [bootimg] payload must be "ramdisk" or "image", not {carrier!r}')
     mkbootimg = uefi / 'Resources/Scripts/mkbootimg.py'
     if not mkbootimg.is_file():
         raise Error(f'{mkbootimg} missing: --uefi must be a Mu-Silicium checkout')
@@ -88,11 +105,26 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='unixnu-bootimg-') as scratch_name:
         scratch = Path(scratch_name)
-        shim = compile_shim(uefi, base, size, requires_header, scratch)
+        shim = compile_shim(uefi, base, size, requires_header, scratch, text_offset)
         tree = patch_dtb(Path(dtb).read_bytes(), ctx.board.get('bootimg', {}).get('dtb_node', []), scratch)
         if tree[:4] != b'\xd0\x0d\xfe\xed' or struct.unpack_from('>I', tree, 4)[0] != len(tree):
             raise Error('invalid compiled device tree')
         combined = shim + firmware
+        payload_bytes = 0
+        if carrier == 'image':
+            if not ramdisk or not Path(ramdisk).is_file():
+                raise Error('board.toml [bootimg] payload = "image" carries the payload in the kernel image: run ./unixnu build payload first')
+            volume = Path(ramdisk).read_bytes()
+            if len(volume) % 512:
+                raise Error('the payload volume is not a whole number of 512-byte sectors')
+            payload_bytes = len(volume)
+            combined += volume
+            if requires_header:
+                # The shim loads only what its ARM64 image header says: the image size at offset 0x10 has to cover the payload.
+                combined = combined[:16] + struct.pack('<Q', len(combined)) + combined[24:]
+            # The bootloader's own ramdisk is then the firmware checkout's placeholder, as its own images use.
+            placeholder = uefi / 'Resources/ramdisk'
+            ramdisk = placeholder if placeholder.is_file() else None
         kernel = gzip.compress(combined, mtime=0) + tree
         kernel_path = scratch / 'Image.gz-dtb'
         kernel_path.write_bytes(kernel)
@@ -110,7 +142,8 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
         run(command, capture=True)
         report = verify(out, combined, tree, ramdisk_path, image)
     report.update(image_sha256=sha256_file(out), image_bytes=out.stat().st_size, fd_sha256=sha256_file(fd),
-                  dtb_sha256=sha256_file(dtb), shim_bytes=len(shim), hardware_tested=False)
+                  dtb_sha256=sha256_file(dtb), shim_bytes=len(shim), payload_carrier=carrier, payload_bytes=payload_bytes,
+                  text_offset=None if text_offset is None else hex(text_offset), hardware_tested=False)
     (out.parent / 'boot.json').write_text(json.dumps(report, indent=2) + '\n')
     log(f'bootimg: {out} ({out.stat().st_size} bytes)')
     return out

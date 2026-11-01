@@ -238,6 +238,15 @@ clang --target=aarch64-none-elf -c \
 
 It appends the firmware volume, compresses the pair with gzip, appends the device tree and packs the Android boot image.
 
+Two settings cover bootloaders that differ from sheng's:
+
+| Setting | Effect |
+| --- | --- |
+| `text_offset` in the device config `[boot_image]` or in `board.toml [bootimg.image]` | BootShim gets `-DTEXT_OFFSET=<value>` and advertises that load offset in its ARM64 header instead of the firmware base. The shim copies the volume to the firmware base itself. A BootShim without `TEXT_OFFSET` support is refused. |
+| `board.toml [bootimg] payload = "image"` | The payload volume follows the firmware volume inside the kernel image, and the image size at header offset `0x10` covers it. The boot image ramdisk is the checkout's `Resources/ramdisk` placeholder. The firmware must publish the volume the shim hands over in `x1`. |
+
+The Xiaomi 13 (fuxi) uses both: its bootloader refuses an image header that asks for the firmware address, and keeps the boot image ramdisk away from the firmware.
+
 ## Verification
 
 | Check | Method |
