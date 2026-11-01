@@ -205,6 +205,26 @@ outputs = []
 legacy_name = "NativeGeniSpi"
 
 [[component]]
+id = "FuxiFtsTouch"
+repository_id = 1441357403
+kind = "driver"
+function = "ST FingerTip FTM5 touch protocol and contact tracking"
+scope = "board"
+repository = "https://github.com/OddlyLabs/FuxiFtsTouch.git"
+revision = "a923703792a94196cefaf49293c162a4919e202a"
+path = "drivers/FuxiFtsTouch"
+hardware = ["ST FingerTip FTM5 (chip id 36 40)"]
+os_abi = ["ipados-17.7.11-21H461"]
+board_dependencies = ["touch power rails", "reset and interrupt pins", "coordinate range"]
+verified_devices = []
+dependencies = ["QcomGeniSpi"]
+source_files = ["FtsProtocol.c", "FtsTouchCore.c"]
+runtime_identifiers = ["FuxiFtsTouch", "FtsProtocol.c"]
+build_stage = "embedded"
+build = []
+outputs = []
+
+[[component]]
 id = "GopFramebuffer"
 repository_id = 1426849559
 kind = "driver"
