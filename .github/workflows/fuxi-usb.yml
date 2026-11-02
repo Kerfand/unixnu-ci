@@ -1,0 +1,110 @@
+name: Fuxi USB CDC kernel
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/fuxi-usb-ci]
+    paths:
+      - '.github/workflows/fuxi-usb.yml'
+      - 'scripts/ci/**'
+      - 'docs/fuxi-usb-ci.md'
+permissions:
+  contents: read
+concurrency:
+  group: fuxi-usb-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      UNIXNU_DEVICE: ${{ github.workspace }}/device
+      GITHUB_TOKEN: ${{ github.token }}
+      UNIXNU_UNIQUE_CHIP_ID: '0123456789ABCDEF'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out pinned fuxi device and USB driver
+        uses: actions/checkout@v4
+        with:
+          repository: Kerfand/UniXNU-fuxi
+          ref: 4f066e69836695c9ac73d3728f68a1ebfa008964
+          path: device
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install build tools
+        run: |
+          brew install llvm lld mtools dtc unifdef
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+      - name: Prepare original fuxi inputs
+        run: |
+          mkdir -p "$RUNNER_TEMP/fuxi-reference" "$RUNNER_TEMP/fuxi-policy"
+          gh release download fuxi-pmgr-baseline -R Kerfand/UniXNU -p kernel.macho -D "$RUNNER_TEMP/fuxi-reference"
+          gh release download fuxi-root-policy -R Kerfand/UniXNU -p fuxi-root-policy.tar.gz -D "$RUNNER_TEMP/fuxi-policy"
+          tar -xzf "$RUNNER_TEMP/fuxi-policy/fuxi-root-policy.tar.gz" -C "$RUNNER_TEMP/fuxi-policy"
+          echo "FUXI_PMGR_REFERENCE_KERNEL=$RUNNER_TEMP/fuxi-reference/kernel.macho" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          paths = list((Path(os.environ['RUNNER_TEMP']) / 'fuxi-policy').rglob('verified-root-os/manifest.bin'))
+          if len(paths) != 1:
+              raise SystemExit('missing or ambiguous owner policy directory')
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('FUXI_ROOT_POLICY=' + str(paths[0].parent.parent) + '\n')
+          PY
+          python3 scripts/ci/prepare-fuxi-usb.py --device device
+          ./unixnu defconfig fuxi_defconfig -D device
+          ./unixnu status --json > out/fuxi-usb-ci/resolved.json
+      - name: Build fuxi kernel and USB archive
+        run: ./unixnu build kernel -D device -j 8
+      - name: Build payload and check linked USB symbols
+        run: python3 scripts/ci/fuxi-usb-payload.py
+      - name: Upload kernel and payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-fuxi-usb-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            out/fuxi/kernel/kernel.macho
+            out/fuxi/kernel/kernel.json
+            out/fuxi/payload/payload.img
+            out/fuxi/payload/payload.json
+            out/fuxi-usb-ci/source-profile.json
+            out/fuxi-usb-ci/linked-usb.json
+            out/fuxi/tree/.cache/fuxi-qud-build/build-report.json
+            out/fuxi/tree/.cache/fuxi-qud-model-check/check-report.json
+            out/fuxi/tree/.cache/fuxi-qud-xnu-check/xnu-check-report.json
+      - name: Upload diagnostic build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuxi-usb-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            out/fuxi/logs/*.log
+            out/fuxi-usb-ci/*.json
+            out/fuxi/tree/.cache/fuxi-qud-*/**/*.log
+      - name: Summary
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          printf '## fuxi USB CDC build\n\nStatus: %s\n\n' "$BUILD_STATUS" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Driver: xiaoleGun/QcomXnuUsbDebug @ 83be5782 (previous fuxi profile).\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Darwin23 console/worker hooks and the exact-stream SMMU takeover are selected. Hardware enumeration and log capture still require a phone test.\n' >> "$GITHUB_STEP_SUMMARY"
