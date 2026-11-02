@@ -52,17 +52,16 @@ def prepare(root, device):
     board_text = replace_once(board_text, 'title = "FUXI FIX061 UFS READONLY"',
         'title = "FUXI USB CDC RESTORE 20261102"')
     board_path.write_text(board_text)
-    # Tree assembly copies device scripts after core scripts. The existing
-    # wrapper replays the core recipe, adds the Darwin23 console/worker hooks,
-    # preserves per-object flags and applies the exact-stream takeover policy.
+    # Tree assembly already copies this pinned device launcher over the core
+    # recipe. Validate and keep it: installing a second wrapper is unnecessary.
     wrapper = device / 'scripts/build-xnu-4k-baseline.sh'
-    if wrapper.exists():
-        raise ValueError('device already overrides the kernel recipe')
-    wrapper.write_text('''#!/usr/bin/env bash
+    expected_wrapper = '''#!/usr/bin/env bash
 set -euo pipefail
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-exec python3 "$ROOT/scripts/run-fuxi-usb-kernel.py"
-''')
+FUXI_TREE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+exec python3 "$FUXI_TREE/scripts/run-fuxi-usb-kernel.py"
+'''
+    if wrapper.read_text() != expected_wrapper:
+        raise ValueError('the pinned device USB launcher changed')
     record = {
         'device_repository': 'Kerfand/UniXNU-fuxi', 'device_revision': DEVICE_REV,
         'usb_repository': 'xiaoleGun/QcomXnuUsbDebug', 'usb_revision': USB_REV,
