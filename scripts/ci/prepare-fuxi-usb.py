@@ -43,6 +43,11 @@ def prepare(root, device):
     new = '''   { [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ] && [ "${XNU_SOURCE_STORAGE:-0}" != 1 ] &&
      [ "${XNU_NATIVE_UFS:-0}" != 1 ]; }; }; then'''
     text = replace_once(text, old, new)
+    # This third-party device builds its own audited NativeUfs archive; the
+    # official ShengUfs compatibility output is intentionally not generated.
+    text = replace_once(text,
+        'UFS_ARCHIVE=$ROOT/build/sheng-ufs/libShengUfs.a',
+        'UFS_ARCHIVE=$ROOT/build/native-ufs/libNativeUfs.a')
     core_recipe.write_text(text)
     # The current core exports the unstripped executable without the older
     # .noctf suffix. Keep the pinned device prelink recipe on the actual output.

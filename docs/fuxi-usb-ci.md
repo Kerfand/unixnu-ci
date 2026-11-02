@@ -20,11 +20,13 @@ USB options are appended to their existing options. The final kernel must
 define the public USB entry points before artifact publication. Power/PHY
 remain inherited from the existing UEFI; reboot control is disabled.
 
-The staging step also resolves two build-contract changes in this framework:
+The staging step also resolves build-contract changes in this framework:
 the native executable uses `.unstripped` instead of the old `.noctf` suffix,
 and a NativeUFS owner-verified root must not require the unrelated Virtio
 transport. Root verification, policy keys, OS/SystemOS UUIDs and the signed
 20H392 inputs remain selected by the pinned device.
+The device's independently audited `build/native-ufs/libNativeUfs.a` is used
+directly; it is not replaced by the official `build/sheng-ufs/libShengUfs.a`.
 
 The workflow downloads the existing PMGR reference and root policy from
 `Kerfand/UniXNU` releases and creates the original trust-cache bundle from
