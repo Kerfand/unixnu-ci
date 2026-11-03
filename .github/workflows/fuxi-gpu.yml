@@ -30,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
@@ -84,27 +85,26 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           DEFCONFIG: ${{ inputs.defconfig }}
         run: |
-          # Two passes. The PMGR and owner-root audits compare against an earlier prelinked candidate of the same
-          # original kernelcache, which a first build does not have: build a bootstrap kernel without them first and
-          # offer it as that candidate (the same procedure as the 2026-11-01 runs).
-          # (Owner root trust stays on: the offline SystemOS mount refuses to build without it.)
-          sed -e 's/^CONFIG_XNU_SHENG_PMGR=y/CONFIG_XNU_SHENG_PMGR=n/' \
-              "$UNIXNU_DEVICE/configs/$DEFCONFIG" > "$UNIXNU_DEVICE/configs/ci_bootstrap_defconfig"
-          ./unixnu defconfig ci_bootstrap_defconfig
-          ./unixnu build kernel -j4 || true
-          ./unixnu build prelink || true
-          K=$(find out -path '*/kernel/kernel.macho' | head -1)
-          echo "bootstrap kernel: ${K:-none}"
-          if [ -n "$K" ]; then
-            J="${K%.macho}.json"
-            for D in "$UNIXNU_DEVICE/build/xnu-prelink" "$UNIXNU_DEVICE/build/native-prelink" \
-                     out/*/tree/build/xnu-prelink out/*/tree/build/native-prelink; do
-              mkdir -p "$D"
-              for n in native-owner-ufs-cpu-desktop-stage2a native-owner-mobile-graphics native-owner-ufs-rootauth3; do
-                cp "$K" "$D/$n-candidate.macho"; cp "$J" "$D/$n-candidate.json"
-              done
+          # The PMGR and owner-root audits compare against an earlier prelinked candidate of the same original
+          # kernelcache, which a first build does not have. A bootstrap pass needs it too, so take the prelinked fuxi
+          # kernel of an earlier run of this repository (artifact unixnu-fuxi-kernel) and offer it as that candidate.
+          mkdir -p "$RUNNER_TEMP/ref"
+          curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?name=unixnu-fuxi-kernel&per_page=1" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["artifacts"][0]["archive_download_url"])' > "$RUNNER_TEMP/ref/url"
+          curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -L "$(cat "$RUNNER_TEMP/ref/url")" -o "$RUNNER_TEMP/ref/k.zip"
+          unzip -o -q "$RUNNER_TEMP/ref/k.zip" -d "$RUNNER_TEMP/ref"
+          K=$(find "$RUNNER_TEMP/ref" -name kernel.macho | head -1); J=$(find "$RUNNER_TEMP/ref" -name kernel.json | head -1)
+          echo "reference: $K $J"; test -f "$K" && test -f "$J"
+          ./unixnu defconfig "$DEFCONFIG"
+          ./unixnu build kernel -j4 || true   # assembles out/*/tree; the archive step stops at the audit
+          for D in "$UNIXNU_DEVICE/build/xnu-prelink" "$UNIXNU_DEVICE/build/native-prelink" \
+                   out/*/tree/build/xnu-prelink out/*/tree/build/native-prelink; do
+            mkdir -p "$D"
+            for n in native-owner-ufs-cpu-desktop-stage2a native-owner-mobile-graphics native-owner-ufs-rootauth3; do
+              cp "$K" "$D/$n-candidate.macho"; cp "$J" "$D/$n-candidate.json"
             done
-          fi
+          done
           python3 - <<'PY'
           import glob, json
           from pathlib import Path
@@ -114,9 +114,8 @@ jobs:
               p.mkdir(parents=True, exist_ok=True)
               (p / 'mobile-graphics-legacy-abi.json').write_text(json.dumps(payload, indent=2) + '\n')
           PY
-          ./unixnu defconfig "$DEFCONFIG"
           ./unixnu build kernel
-          find out -path '*/kernel/kernel.macho' -newer "$UNIXNU_DEVICE/configs/ci_bootstrap_defconfig" -print
+          find out -path '*/kernel/kernel.macho' -newer "$RUNNER_TEMP/ref/url" -print
 
       - name: GPU addon
         working-directory: UniXNU
