@@ -119,6 +119,9 @@ jobs:
               p.mkdir(parents=True, exist_ok=True)
               (p / 'mobile-graphics-legacy-abi.json').write_text(json.dumps(payload, indent=2) + '\n')
           PY
+          # Board firmware from proprietary-files.txt (GPU GMU/SQE/ZAP ...), fetched from the device repository's public
+          # mirror and checked against its SHA-256 (docs: porting/migration#build-inputs).
+          python3 "$UNIXNU_DEVICE/scripts/extract-files.py" --device "$UNIXNU_DEVICE"
           # The audits also read the original iPad7 kernelcache, which the prelink step normally leaves in the device
           # repository's .cache/firmware: extract only that member from the board's IPSW (remote zip) and decompress it.
           IPSW_URL=$(python3 -c "import tomllib,sys; print(tomllib.load(open(sys.argv[1],'rb'))['ipsw']['url'])" "$UNIXNU_DEVICE/board.toml")
