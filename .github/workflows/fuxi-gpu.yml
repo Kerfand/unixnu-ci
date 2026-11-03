@@ -116,6 +116,20 @@ jobs:
               p.mkdir(parents=True, exist_ok=True)
               (p / 'mobile-graphics-legacy-abi.json').write_text(json.dumps(payload, indent=2) + '\n')
           PY
+          # The audits also read the original iPad7 kernelcache, which the prelink step normally leaves in the device
+          # repository's .cache/firmware: extract only that member from the board's IPSW (remote zip) and decompress it.
+          IPSW_URL=$(python3 -c "import tomllib,sys; print(tomllib.load(open(sys.argv[1],'rb'))['ipsw']['url'])" "$UNIXNU_DEVICE/board.toml")
+          KC="$UNIXNU_DEVICE/.cache/firmware/kernelcache.macho"
+          mkdir -p "$KC" "$RUNNER_TEMP/kc"
+          ipsw extract --kernel --remote "$IPSW_URL" -o "$RUNNER_TEMP/kc"
+          RAW=$(find "$RUNNER_TEMP/kc" -name 'kernelcache.release.ipad7*' -type f | head -1)
+          echo "kernelcache: $RAW"
+          ipsw kernel dec "$RAW" -o "$RUNNER_TEMP/kc" || true
+          DEC=$(find "$RUNNER_TEMP/kc" -name '*.decompressed' -type f | head -1)
+          if [ -z "$DEC" ] && [ "$(head -c 4 "$RAW" | xxd -p)" = "cffaedfe" ]; then DEC=$RAW; fi
+          test -n "$DEC"
+          cp "$DEC" "$KC/kernelcache.release.ipad7.decompressed"
+          ls -la "$KC"
           ./unixnu build kernel
           find out -path '*/kernel/kernel.macho' -newer "$RUNNER_TEMP/ref/url" -print
 
