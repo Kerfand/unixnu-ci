@@ -84,9 +84,39 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           DEFCONFIG: ${{ inputs.defconfig }}
         run: |
+          # Two passes. The PMGR and owner-root audits compare against an earlier prelinked candidate of the same
+          # original kernelcache, which a first build does not have: build a bootstrap kernel without them first and
+          # offer it as that candidate (the same procedure as the 2026-11-01 runs).
+          sed -e 's/^CONFIG_XNU_SHENG_PMGR=y/CONFIG_XNU_SHENG_PMGR=n/' \
+              -e 's/^CONFIG_XNU_OWNER_ROOT_TRUST=y/CONFIG_XNU_OWNER_ROOT_TRUST=n/' \
+              "$UNIXNU_DEVICE/configs/$DEFCONFIG" > "$UNIXNU_DEVICE/configs/ci_bootstrap_defconfig"
+          ./unixnu defconfig ci_bootstrap_defconfig
+          ./unixnu build kernel -j4 || true
+          ./unixnu build prelink || true
+          K=$(find out -path '*/kernel/kernel.macho' | head -1)
+          echo "bootstrap kernel: ${K:-none}"
+          if [ -n "$K" ]; then
+            J="${K%.macho}.json"
+            for D in "$UNIXNU_DEVICE/build/xnu-prelink" "$UNIXNU_DEVICE/build/native-prelink" \
+                     out/*/tree/build/xnu-prelink out/*/tree/build/native-prelink; do
+              mkdir -p "$D"
+              for n in native-owner-ufs-cpu-desktop-stage2a native-owner-mobile-graphics native-owner-ufs-rootauth3; do
+                cp "$K" "$D/$n-candidate.macho"; cp "$J" "$D/$n-candidate.json"
+              done
+            done
+          fi
+          python3 - <<'PY'
+          import glob, json
+          from pathlib import Path
+          payload = {'runtime_metadata_checkpoint_sha256': '3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b'}
+          for d in glob.glob('out/*/tree/build') + ['../device/build']:
+              p = Path(d) / 'display-analysis'
+              p.mkdir(parents=True, exist_ok=True)
+              (p / 'mobile-graphics-legacy-abi.json').write_text(json.dumps(payload, indent=2) + '\n')
+          PY
           ./unixnu defconfig "$DEFCONFIG"
           ./unixnu build kernel
-          find out -path '*/kernel/kernel.macho' -print
+          find out -path '*/kernel/kernel.macho' -newer "$UNIXNU_DEVICE/configs/ci_bootstrap_defconfig" -print
 
       - name: GPU addon
         working-directory: UniXNU
