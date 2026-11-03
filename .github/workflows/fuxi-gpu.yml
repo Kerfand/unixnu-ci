@@ -61,7 +61,7 @@ jobs:
 
       - name: tools
         run: |
-          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup age unifdef
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup age unifdef blacktop/tap/ipsw
           {
             echo "$HOME/.cargo/bin"
             echo "/opt/homebrew/opt/llvm/bin"
@@ -153,7 +153,7 @@ jobs:
           { git log -1 --format='UniXNU %H'; git submodule status drivers/Adreno740 drivers/AdrenoMetal kits/AdrenoPM4; } > fuxi-out/revisions.txt || true
           ls -la fuxi-out
           tar -C fuxi-out -czf - --exclude addon-x . | age -r "$AGE_RECIPIENT" -o fuxi-gpu.tar.gz.age
-          rm -rf fuxi-out out/ipsw
+          rm -rf fuxi-out out/ipsw "$RUNNER_TEMP/kc" ../device/.cache/firmware/kernelcache.macho
           ls -la fuxi-gpu.tar.gz.age
 
       - uses: actions/upload-artifact@v4
