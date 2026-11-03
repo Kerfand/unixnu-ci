@@ -102,6 +102,8 @@ jobs:
           sed -i '' "s#'build/xnu-prelink/native-owner-ufs-rootauth3-candidate.macho'#'$RUNNER_TEMP/ref/candidate.macho'#" \
             scripts/audit-amfi-pmgr-contract.py
           grep -n "candidate.macho'" scripts/audit-amfi-pmgr-contract.py
+          # The tree takes scripts from the checkout's commit, not its working files: commit the edit locally.
+          git -c user.name=ci -c user.email=ci@localhost commit -q -am 'ci: audit reference candidate path'
           ./unixnu defconfig "$DEFCONFIG"
           python3 - <<'PY'
           import glob, json
