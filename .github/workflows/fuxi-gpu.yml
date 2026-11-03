@@ -96,15 +96,13 @@ jobs:
           unzip -o -q "$RUNNER_TEMP/ref/k.zip" -d "$RUNNER_TEMP/ref"
           K=$(find "$RUNNER_TEMP/ref" -name kernel.macho | head -1); J=$(find "$RUNNER_TEMP/ref" -name kernel.json | head -1)
           echo "reference: $K $J"; test -f "$K" && test -f "$J"
+          # Each kernel build reassembles out/*/tree and prunes build/, so a copy placed there does not survive. Point the
+          # audit's default candidate at the reference itself instead (scripts are copied into the tree from here).
+          cp "$K" "$RUNNER_TEMP/ref/candidate.macho"; cp "$J" "$RUNNER_TEMP/ref/candidate.json"
+          sed -i '' "s#'build/xnu-prelink/native-owner-ufs-rootauth3-candidate.macho'#'$RUNNER_TEMP/ref/candidate.macho'#" \
+            scripts/audit-amfi-pmgr-contract.py
+          grep -n "candidate.macho'" scripts/audit-amfi-pmgr-contract.py
           ./unixnu defconfig "$DEFCONFIG"
-          ./unixnu build kernel -j4 || true   # assembles out/*/tree; the archive step stops at the audit
-          for D in "$UNIXNU_DEVICE/build/xnu-prelink" "$UNIXNU_DEVICE/build/native-prelink" \
-                   out/*/tree/build/xnu-prelink out/*/tree/build/native-prelink; do
-            mkdir -p "$D"
-            for n in native-owner-ufs-cpu-desktop-stage2a native-owner-mobile-graphics native-owner-ufs-rootauth3; do
-              cp "$K" "$D/$n-candidate.macho"; cp "$J" "$D/$n-candidate.json"
-            done
-          done
           python3 - <<'PY'
           import glob, json
           from pathlib import Path
