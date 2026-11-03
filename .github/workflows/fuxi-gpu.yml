@@ -101,9 +101,12 @@ jobs:
           cp "$K" "$RUNNER_TEMP/ref/candidate.macho"; cp "$J" "$RUNNER_TEMP/ref/candidate.json"
           # The tree copies scripts/ from UniXNU, then the SoC repository, then the device repository, later ones winning;
           # the device repository carries its own copy of the audit, so edit every copy in the workspace.
-          find "$GITHUB_WORKSPACE" -name audit-amfi-pmgr-contract.py -not -path '*/out/*' | while read -r f; do
-            # UniXNU's copy looks in build/xnu-prelink, the device repository's in build/native-prelink
-            sed -i '' -E "s#'build/(xnu|native)-prelink/native-owner-ufs-rootauth3-candidate.macho'#'$RUNNER_TEMP/ref/candidate.macho'#" "$f"
+          # Several builders and audits read a candidate (rootauth3, mobile-graphics, v9-hid-init, ...): point every
+          # build/{xnu,native}-prelink/*-candidate.macho default at the reference. UniXNU's copies use xnu-prelink,
+          # the device repository's native-prelink.
+          grep -rlE "build/(xnu|native)-prelink/[A-Za-z0-9-]+-candidate\.macho'" "$GITHUB_WORKSPACE/UniXNU/scripts" "$UNIXNU_DEVICE/scripts" \
+            | while read -r f; do
+            sed -i '' -E "s#'build/(xnu|native)-prelink/[A-Za-z0-9-]+-candidate\.macho'#'$RUNNER_TEMP/ref/candidate.macho'#g" "$f"
             echo "$f: $(grep -c "$RUNNER_TEMP/ref/candidate.macho" "$f")"
           done
           ./unixnu defconfig "$DEFCONFIG"
