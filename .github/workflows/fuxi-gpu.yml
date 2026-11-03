@@ -122,7 +122,7 @@ jobs:
           KC="$UNIXNU_DEVICE/.cache/firmware/kernelcache.macho"
           mkdir -p "$KC" "$RUNNER_TEMP/kc"
           ipsw extract --kernel --remote "$IPSW_URL" -o "$RUNNER_TEMP/kc"
-          RAW=$(find "$RUNNER_TEMP/kc" -name 'kernelcache.release.ipad7*' -type f | head -1)
+          RAW=$(find "$RUNNER_TEMP/kc" -iname 'kernelcache.release.ipad7*' -type f | head -1)   # ipsw names it ...iPad7,1_2_3_4
           echo "kernelcache: $RAW"
           ipsw kernel dec "$RAW" -o "$RUNNER_TEMP/kc" || true
           DEC=$(find "$RUNNER_TEMP/kc" -name '*.decompressed' -type f | head -1)
