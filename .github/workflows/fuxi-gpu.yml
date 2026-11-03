@@ -1,0 +1,145 @@
+name: fuxi GPU build
+
+# The fuxi kernel and the Adreno GPU addon from one UniXNU revision, so the kernel GPU driver and the Metal plugin/Turnip
+# share one user-client interface. The device tree is the t32 author's public repository. Kernels contain Apple code, so
+# every output is encrypted to the owner's age key before upload; the private key never leaves the owner's machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref:
+        description: UniXNU/UniXNU ref
+        required: true
+        default: main
+      device_repository:
+        description: Device repository
+        required: true
+        default: ljhhkx529/unixnu-fuxi
+      device_ref:
+        description: Device repository ref
+        required: true
+        default: old
+      defconfig:
+        description: Defconfig of the device repository
+        required: true
+        default: fuxi_full_defconfig
+      build_kernel:
+        description: Build the kernel too (off builds only the GPU addon)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  AGE_RECIPIENT: age1fsmu7pn6at08gvtl3c4yccy0m55eaepphv5puxgx2a3mt8qhnqfshlfqzr
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ inputs.unixnu_ref }}
+          path: UniXNU
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.device_repository }}
+          ref: ${{ inputs.device_ref }}
+          path: device
+          submodules: recursive
+          persist-credentials: false
+
+      - name: tools
+        run: |
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup age unifdef
+          {
+            echo "$HOME/.cargo/bin"
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+            echo "$(brew --prefix unifdef)/bin"
+          } >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          rustup target add aarch64-apple-ios --toolchain 1.98.0
+          xcodebuild -version | head -n 1 || true
+          xcrun --sdk iphoneos --show-sdk-version
+          git -C UniXNU log -1 --format='UniXNU %H %cd %s'
+          git -C device log -1 --format='device %H %cd %s'
+          git -C UniXNU submodule status drivers/Adreno740 drivers/AdrenoMetal kits/AdrenoPM4 || true
+
+      - name: kernel
+        if: inputs.build_kernel
+        working-directory: UniXNU
+        env:
+          UNIXNU_DEVICE: ${{ github.workspace }}/device
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFCONFIG: ${{ inputs.defconfig }}
+        run: |
+          ./unixnu defconfig "$DEFCONFIG"
+          ./unixnu build kernel
+          find out -path '*/kernel/kernel.macho' -print
+
+      - name: GPU addon
+        working-directory: UniXNU
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os, subprocess, sys
+          from pathlib import Path
+          root = Path.cwd()
+          spec = importlib.util.spec_from_file_location('runtime', root / 'scripts/build-boot-runtime.py')
+          runtime = importlib.util.module_from_spec(spec)
+          sys.argv = ['build-boot-runtime.py']
+          spec.loader.exec_module(runtime)
+          plugin = runtime.build_plugin('ios')
+          print('plugin dir', plugin, sorted(p.name for p in plugin.iterdir()))
+          out = root / 'fuxi-out'
+          out.mkdir(exist_ok=True)
+          subprocess.run([sys.executable, root / 'scripts/make-gpu-addon.py', '--publish', out / 'gpuaddon.bin'], check=True,
+                         env=dict(os.environ, ADRENO_PLUGIN_DIR=str(plugin)))
+          work = out / 'addon-x'
+          work.mkdir(exist_ok=True)
+          hashes = runtime.addon_hashes(out / 'gpuaddon.bin', work)
+          (out / 'cdhashes.txt').write_text('\n'.join(hashes) + '\n')
+          print('CDHashes', hashes)
+          PY
+
+      - name: collect and encrypt
+        if: always()
+        working-directory: UniXNU
+        run: |
+          mkdir -p fuxi-out
+          for k in out/*/*/*/kernel/kernel.macho out/*/kernel/kernel.macho; do [ -f "$k" ] && cp "$k" fuxi-out/ && break; done
+          cp out/*/*/*/kernel/kernel.json fuxi-out/ 2>/dev/null || true
+          { git log -1 --format='UniXNU %H'; git submodule status drivers/Adreno740 drivers/AdrenoMetal kits/AdrenoPM4; } > fuxi-out/revisions.txt || true
+          ls -la fuxi-out
+          tar -C fuxi-out -czf - --exclude addon-x . | age -r "$AGE_RECIPIENT" -o fuxi-gpu.tar.gz.age
+          rm -rf fuxi-out out/ipsw
+          ls -la fuxi-gpu.tar.gz.age
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuxi-gpu-encrypted
+          path: UniXNU/fuxi-gpu.tar.gz.age
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuxi-gpu-logs
+          path: |
+            UniXNU/out/*/*/*/logs/*.log
+            UniXNU/.cache/*.log
+          retention-days: 3
+          if-no-files-found: ignore
