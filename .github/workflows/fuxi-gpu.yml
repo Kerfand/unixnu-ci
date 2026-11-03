@@ -87,8 +87,8 @@ jobs:
           # Two passes. The PMGR and owner-root audits compare against an earlier prelinked candidate of the same
           # original kernelcache, which a first build does not have: build a bootstrap kernel without them first and
           # offer it as that candidate (the same procedure as the 2026-11-01 runs).
+          # (Owner root trust stays on: the offline SystemOS mount refuses to build without it.)
           sed -e 's/^CONFIG_XNU_SHENG_PMGR=y/CONFIG_XNU_SHENG_PMGR=n/' \
-              -e 's/^CONFIG_XNU_OWNER_ROOT_TRUST=y/CONFIG_XNU_OWNER_ROOT_TRUST=n/' \
               "$UNIXNU_DEVICE/configs/$DEFCONFIG" > "$UNIXNU_DEVICE/configs/ci_bootstrap_defconfig"
           ./unixnu defconfig ci_bootstrap_defconfig
           ./unixnu build kernel -j4 || true
